@@ -1,0 +1,16 @@
+# Entornos virtuales
+.venv/
+__pycache__/
+.python-version
+
+# Archivos de salida (Documentación generada)
+*.md
+!README.md
+
+# Archivos de UV y configuración de entorno
+# No ignoramos pyproject.toml ni uv.lock para que otros puedan instalarlo
+.uv/
+
+# Logs y temporales
+*.log
+.DS_Store
