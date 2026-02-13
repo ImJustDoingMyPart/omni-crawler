@@ -5,7 +5,7 @@ import argparse
 import subprocess
 from datetime import datetime
 
-# Importamos Streamlit pero manejamos el caso de que no se esté ejecutando como tal
+# Importamos Streamlit de forma segura
 try:
     import streamlit as st
     from streamlit.runtime.scriptrunner import get_script_run_ctx
@@ -16,16 +16,12 @@ from crawl4ai import AsyncWebCrawler, CrawlerRunConfig, CacheMode, BrowserConfig
 from crawl4ai.content_filter_strategy import PruningContentFilter
 from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
 
-# --- LÓGICA CENTRAL DE CRAWLING (El "Motor") ---
+# --- LÓGICA CENTRAL DE CRAWLING ---
 async def ejecutar_crawling(url, output_file, log_callback=print):
-    """
-    Esta función es agnóstica: no sabe si corre en terminal o GUI.
-    Solo recibe una URL y una función para reportar progreso (log_callback).
-    """
     domain = url.split("//")[-1].split("/")[0]
     log_callback(f"🚀 Iniciando misión en: {url}")
 
-    # 1. Configuración del Filtro (Limpieza)
+    # 1. Configuración del Filtro
     filtro_limpieza = PruningContentFilter(
         threshold=0.48,      
         threshold_type="dynamic",
@@ -33,12 +29,14 @@ async def ejecutar_crawling(url, output_file, log_callback=print):
     )
     generador_md = DefaultMarkdownGenerator(content_filter=filtro_limpieza)
 
-    # 2. Configuración del Navegador (Modo Sigilo Anti-Bloqueo)
+    # 2. Configuración del Navegador (MODO SIGILO ACTUALIZADO)
     browser_cfg = BrowserConfig(
         headless=True,
-        verbose=False, # Menos ruido en terminal
+        verbose=False,
         user_agent_mode="random",
         headers={
+            # TRUCO 1: Decimos que venimos de Google para ganar confianza
+            "Referer": "https://www.google.com/",
             "Accept-Language": "en-US,en;q=0.9,es;q=0.8",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
         }
@@ -48,7 +46,9 @@ async def ejecutar_crawling(url, output_file, log_callback=print):
         cache_mode=CacheMode.BYPASS,
         markdown_generator=generador_md,
         stream=False,
-        page_timeout=60000 
+        page_timeout=60000,
+        # TRUCO 2: Esperamos 2 segundos antes de capturar (Simula lectura humana y relaja al servidor)
+        delay_before_return_html=2.0 
     )
 
     async with AsyncWebCrawler(config=browser_cfg) as crawler:
@@ -64,14 +64,13 @@ async def ejecutar_crawling(url, output_file, log_callback=print):
         urls_encontradas = {url}
         for link in result_index.links.get("internal", []):
             href = link.get("href", "")
-            # Lógica: debe empezar con la URL base y no ser un ancla (#)
             if href.startswith(url) and "#" not in href:
                 urls_encontradas.add(href)
 
         lista_urls = list(urls_encontradas)
-        log_callback(f"✅ Encontradas {len(lista_urls)} páginas. Iniciando descarga masiva...")
+        log_callback(f"✅ Encontradas {len(lista_urls)} páginas. Descargando con pausas de seguridad...")
 
-        # PASO C: Descarga
+        # PASO C: Descarga Masiva
         results = await crawler.arun_many(lista_urls, config=run_cfg)
 
         # PASO D: Guardado
@@ -96,7 +95,6 @@ def run_gui():
     st.title("🕷️ Omni-Crawler")
     st.markdown("Extractor de documentación para IA (Powered by Crawl4AI)")
 
-    # Formulario
     with st.form("crawler_form"):
         col1, col2 = st.columns([3, 1])
         with col1:
@@ -106,11 +104,9 @@ def run_gui():
         
         submitted = st.form_submit_button("🚀 Iniciar Extracción")
 
-    # Área de logs visual
     log_container = st.empty()
     
     def gui_logger(msg):
-        # Función auxiliar para imprimir en la web
         if "❌" in msg: log_container.error(msg)
         elif "✅" in msg: log_container.success(msg)
         elif "🎉" in msg: log_container.balloons(); st.success(msg)
@@ -119,15 +115,12 @@ def run_gui():
     if submitted and url_input:
         asyncio.run(ejecutar_crawling(url_input, filename, gui_logger))
         
-        # Botón de descarga post-proceso
         if os.path.exists(filename):
             with open(filename, "r") as f:
                 st.download_button("📥 Bajar Markdown", f, file_name=filename)
 
 # --- PUNTO DE ENTRADA PRINCIPAL ---
 if __name__ == "__main__":
-    # Detectar si estamos corriendo BAJO Streamlit
-    # (Streamlit modifica el entorno de ejecución)
     is_running_as_streamlit = False
     try:
         if get_script_run_ctx():
@@ -136,10 +129,8 @@ if __name__ == "__main__":
         pass
 
     if is_running_as_streamlit:
-        # CASO 1: Ya estamos en modo GUI
         run_gui()
     else:
-        # Analizamos argumentos de terminal
         parser = argparse.ArgumentParser(description="Crawler Híbrido CLI/GUI")
         parser.add_argument("url", nargs="?", help="URL a procesar")
         parser.add_argument("-o", "--output", default="output.md", help="Archivo de salida")
@@ -148,12 +139,9 @@ if __name__ == "__main__":
         args = parser.parse_args()
 
         if args.gui or not args.url:
-            # CASO 2: Usuario pidió GUI o no dio URL -> Auto-lanzar Streamlit
             print("🖥️  Lanzando interfaz gráfica...")
-            # Truco: El script se llama a sí mismo pero usando 'streamlit run'
             sys.argv = ["streamlit", "run", __file__]
             sys.exit(subprocess.call([sys.executable, "-m", "streamlit", "run", __file__]))
         else:
-            # CASO 3: Modo CLI Clásico
             print("📟 Modo Terminal activado")
             asyncio.run(ejecutar_crawling(args.url, args.output))
