@@ -14,6 +14,7 @@ except ImportError:
     st = None
 
 from crawl4ai import AsyncWebCrawler, CrawlerRunConfig, CacheMode, BrowserConfig
+from crawl4ai.async_dispatcher import SemaphoreDispatcher
 from crawl4ai.content_filter_strategy import PruningContentFilter
 from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
 
@@ -55,11 +56,9 @@ def crear_run_config(modo="static", md_generator=None, **kwargs):
         simulate_user=True,
         override_navigator=True,
         magic=True,
-        # Limpieza automática de overlays y popups
+        # Limpieza automática de overlays
         remove_overlay_elements=True,
-        remove_consent_popups=True,
-        # Capturar contenido oculto en Shadow DOM e iframes
-        flatten_shadow_dom=True,
+        # Capturar contenido de iframes
         process_iframes=True,
     )
 
@@ -116,8 +115,6 @@ async def crawl_con_load_more(crawler, url, run_cfg, selector, max_clicks, log_c
     session = "loadmore_session"
 
     # Paso 1: Carga inicial
-    from crawl4ai import CrawlerRunConfig as RC
-
     config_inicial = CrawlerRunConfig(
         cache_mode=CacheMode.BYPASS,
         markdown_generator=run_cfg.markdown_generator,
@@ -129,8 +126,6 @@ async def crawl_con_load_more(crawler, url, run_cfg, selector, max_clicks, log_c
         override_navigator=True,
         magic=True,
         remove_overlay_elements=True,
-        remove_consent_popups=True,
-        flatten_shadow_dom=True,
         process_iframes=True,
         session_id=session,
     )
@@ -165,7 +160,6 @@ async def crawl_con_load_more(crawler, url, run_cfg, selector, max_clicks, log_c
             js_only=True,
             cache_mode=CacheMode.BYPASS,
             markdown_generator=run_cfg.markdown_generator,
-            flatten_shadow_dom=True,
             process_iframes=True,
         )
 
@@ -238,12 +232,13 @@ async def ejecutar_crawling(url, output_file, modo="static", log_callback=print,
         )
 
         # PASO C: Descarga masiva con límite de concurrencia
+        dispatcher = SemaphoreDispatcher(semaphore_count=max_concurrent)
         resultados_principales = []
         if urls_a_descargar:
             resultados_principales = await crawler.arun_many(
                 urls_a_descargar,
                 config=run_cfg,
-                max_concurrent=max_concurrent,
+                dispatcher=dispatcher,
             )
 
         # PASO D: Reintentar URLs fallidas (1 intento)
@@ -254,7 +249,7 @@ async def ejecutar_crawling(url, output_file, modo="static", log_callback=print,
             resultados_reintentos = await crawler.arun_many(
                 fallidas,
                 config=run_cfg,
-                max_concurrent=max_concurrent,
+                dispatcher=dispatcher,
             )
 
         # PASO E: Consolidar y guardar
